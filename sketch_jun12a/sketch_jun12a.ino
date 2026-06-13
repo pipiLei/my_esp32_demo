@@ -11,6 +11,8 @@
 #define WIDTH  128
 #define HEIGHT 160
 
+#include "emoji3.h"
+
 const uint16_t C_BLACK   = 0x0000;
 const uint16_t C_WHITE   = 0xFFFF;
 const uint16_t C_RED     = 0xF800;
@@ -68,6 +70,20 @@ void fillRect(uint8_t x,uint8_t y,uint8_t w,uint8_t h,uint16_t c){
     uint32_t n=(uint32_t)w*h;
     for(uint32_t i=0;i<n;i++){spiWrite(c>>8);spiWrite(c&0xFF);}
     csH();
+}
+
+void drawImage(uint8_t x,uint8_t y,const uint16_t* data,uint16_t w,uint16_t h){
+    // 逐行输出：每行独立 setWindow，避免跨行时地址计数器异常
+    // 行顺序：自底向上 (MY=1)，列顺序：自左向右 (与 drawChar 一致)
+    for(int16_t row=h-1;row>=0;row--){
+        setWindow(x,y+row,x+w-1,y+row);
+        dcH();csL();
+        for(uint16_t col=0;col<w;col++){
+            uint16_t c=data[row*w+col];
+            spiWrite(c>>8);spiWrite(c&0xFF);
+        }
+        csH();
+    }
 }
 
 void drawRect(uint8_t x,uint8_t y,uint8_t w,uint8_t h,uint16_t c){
@@ -213,27 +229,8 @@ void setup() {
 
     tftInit(3);  // MADCTL=0xC0 (MY+MX, RGB order)
 
-    // RGB 快速闪烁证明颜色正确
-    fill(C_RED);   delay(300);
-    fill(C_GREEN); delay(300);
-    fill(C_BLUE);  delay(300);
-    fill(C_BLACK);
-
-    // 画边框
-    drawRect(0,0,128,160,C_WHITE);
-    drawRect(2,2,124,156,C_CYAN);
-
-    // 文字
-    drawText(10,20,"HELLO",C_WHITE,2);
-    drawText(10,52,"WORLD!",C_YELLOW,2);
-    hline(10,74,108,C_GREEN);
-    drawText(10,82,"ESP32-S3",C_CYAN,1);
-    drawText(10,100,"ST7735 128x160",C_WHITE,1);
-    drawText(10,118,"RGB-TFT 1.8\"",C_WHITE,1);
-
-    // 底部色条
-    uint16_t cols[]={C_RED,C_GREEN,C_BLUE,C_YELLOW,C_MAGENTA,C_CYAN};
-    for(int i=0;i<6;i++)fillRect(2+i*21,140,18,14,cols[i]);
+    // 显示 JPEG 图片 (128x128, 顶部居中)
+    drawImage(0, 0, IMG_DATA, IMG_WIDTH, IMG_HEIGHT);
 
     Serial.println("DONE!");USBSerial.println("DONE!");
 }
