@@ -11,7 +11,7 @@
 #define WIDTH  128
 #define HEIGHT 160
 
-#include "emoji3.h"
+#include "emoji5.h"
 
 const uint16_t C_BLACK   = 0x0000;
 const uint16_t C_WHITE   = 0xFFFF;
@@ -40,6 +40,37 @@ void spiWrite(uint8_t b) {
     (b&0x04)?mosiH():mosiL(); delayMicroseconds(1); sckH(); delayMicroseconds(1); sckL();
     (b&0x02)?mosiH():mosiL(); delayMicroseconds(1); sckH(); delayMicroseconds(1); sckL();
     (b&0x01)?mosiH():mosiL(); delayMicroseconds(1); sckH(); delayMicroseconds(1); sckL();
+}
+
+// 快速版本：digitalWrite 无延时，比寄存器直写略慢但更可靠
+void spiWriteFast(uint8_t b) {
+    (b&0x80)?mosiH():mosiL(); sckH(); sckL();
+    (b&0x40)?mosiH():mosiL(); sckH(); sckL();
+    (b&0x20)?mosiH():mosiL(); sckH(); sckL();
+    (b&0x10)?mosiH():mosiL(); sckH(); sckL();
+    (b&0x08)?mosiH():mosiL(); sckH(); sckL();
+    (b&0x04)?mosiH():mosiL(); sckH(); sckL();
+    (b&0x02)?mosiH():mosiL(); sckH(); sckL();
+    (b&0x01)?mosiH():mosiL(); sckH(); sckL();
+}
+
+// 极速版本：GPIO 寄存器直写，用于图像数据连续输出
+#define MOSI_MASK (1 << PIN_MOSI)  // 0x0800
+#define SCLK_MASK (1 << PIN_SCLK)  // 0x1000
+#define GPIO_W1TS (*(volatile uint32_t*)0x60004008)
+#define GPIO_W1TC (*(volatile uint32_t*)0x6000400C)
+
+#define NOP asm volatile("nop")
+
+void spiWriteUltra(uint8_t b) {
+    if(b&0x80)GPIO_W1TS=MOSI_MASK;else GPIO_W1TC=MOSI_MASK;NOP;NOP;NOP;GPIO_W1TS=SCLK_MASK;NOP;NOP;GPIO_W1TC=SCLK_MASK;
+    if(b&0x40)GPIO_W1TS=MOSI_MASK;else GPIO_W1TC=MOSI_MASK;NOP;NOP;NOP;GPIO_W1TS=SCLK_MASK;NOP;NOP;GPIO_W1TC=SCLK_MASK;
+    if(b&0x20)GPIO_W1TS=MOSI_MASK;else GPIO_W1TC=MOSI_MASK;NOP;NOP;NOP;GPIO_W1TS=SCLK_MASK;NOP;NOP;GPIO_W1TC=SCLK_MASK;
+    if(b&0x10)GPIO_W1TS=MOSI_MASK;else GPIO_W1TC=MOSI_MASK;NOP;NOP;NOP;GPIO_W1TS=SCLK_MASK;NOP;NOP;GPIO_W1TC=SCLK_MASK;
+    if(b&0x08)GPIO_W1TS=MOSI_MASK;else GPIO_W1TC=MOSI_MASK;NOP;NOP;NOP;GPIO_W1TS=SCLK_MASK;NOP;NOP;GPIO_W1TC=SCLK_MASK;
+    if(b&0x04)GPIO_W1TS=MOSI_MASK;else GPIO_W1TC=MOSI_MASK;NOP;NOP;NOP;GPIO_W1TS=SCLK_MASK;NOP;NOP;GPIO_W1TC=SCLK_MASK;
+    if(b&0x02)GPIO_W1TS=MOSI_MASK;else GPIO_W1TC=MOSI_MASK;NOP;NOP;NOP;GPIO_W1TS=SCLK_MASK;NOP;NOP;GPIO_W1TC=SCLK_MASK;
+    if(b&0x01)GPIO_W1TS=MOSI_MASK;else GPIO_W1TC=MOSI_MASK;NOP;NOP;NOP;GPIO_W1TS=SCLK_MASK;NOP;NOP;GPIO_W1TC=SCLK_MASK;
 }
 
 void cmd(uint8_t c) { dcL(); csL(); spiWrite(c); csH(); }
@@ -72,18 +103,14 @@ void fillRect(uint8_t x,uint8_t y,uint8_t w,uint8_t h,uint16_t c){
     csH();
 }
 
-void drawImage(uint8_t x,uint8_t y,const uint16_t* data,uint16_t w,uint16_t h){
-    // 逐行输出：每行独立 setWindow，避免跨行时地址计数器异常
-    // 行顺序：自底向上 (MY=1)，列顺序：自左向右 (与 drawChar 一致)
-    for(int16_t row=h-1;row>=0;row--){
-        setWindow(x,y+row,x+w-1,y+row);
-        dcH();csL();
-        for(uint16_t col=0;col<w;col++){
-            uint16_t c=data[row*w+col];
-            spiWrite(c>>8);spiWrite(c&0xFF);
-        }
-        csH();
+void drawImage(const uint16_t* data,uint16_t count){
+    cmd(0x2C);  // RAMWR only — CASET/RASET 已在 setup 中预设
+    dcH();csL();
+    for(uint32_t i=0;i<count;i++){
+        uint16_t c=data[i];
+        spiWriteUltra(c>>8);spiWriteUltra(c&0xFF);
     }
+    csH();
 }
 
 void drawRect(uint8_t x,uint8_t y,uint8_t w,uint8_t h,uint16_t c){
@@ -224,15 +251,23 @@ void tftInit(int mode) {
 
 void setup() {
     Serial.begin(115200);USBSerial.begin(115200);delay(2000);
-    Serial.println("\n=== HELLO WORLD ===");
-    USBSerial.println("\n=== HELLO WORLD ===");
+    Serial.println("\n=== GIF ANIMATION ===");
+    USBSerial.println("\n=== GIF ANIMATION ===");
 
     tftInit(3);  // MADCTL=0xC0 (MY+MX, RGB order)
+    fill(C_BLACK);
 
-    // 显示 JPEG 图片 (128x128, 顶部居中)
-    drawImage(0, 0, IMG_DATA, IMG_WIDTH, IMG_HEIGHT);
-
-    Serial.println("DONE!");USBSerial.println("DONE!");
+    // 预设 CASET/RASET 为 GIF 120x120 居中区域，后续只发 RAMWR 不调 setWindow
+    uint8_t gx = (128 - GIF_W) / 2;
+    uint8_t gy = (160 - GIF_H) / 2;
+    cmd(0x2A); dat16(gx+XOFF); dat16(gx+GIF_W-1+XOFF);
+    cmd(0x2B); dat16(gy+YOFF); dat16(gy+GIF_H-1+YOFF);
 }
 
-void loop(){delay(2000);}
+void loop(){
+    for(uint8_t f=0; f<GIF_FRAMES; f++){
+        unsigned long t = millis();
+        drawImage(GIF_DATA[f], (uint32_t)GIF_W*GIF_H);
+        while(millis() - t < GIF_DELAY[f]);
+    }
+}
